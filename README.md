@@ -7,7 +7,9 @@ Free, personal per-fight UFC alerts. Polls ESPN's public scoreboard every 30 s d
 - **Result** when a bout ends
 - **Armed** when it starts watching a card, so you know it's working
 
-Pick which fights you care about on the picker page (`docs/index.html`, served by GitHub Pages). No picks means every fight alerts.
+Pick which fights you care about on the picker page (`docs/index.html`, served by GitHub Pages). The alerts above go to picked fights only.
+
+If every fight is picked, or nothing is picked, you get **segment mode** instead: one urgent alert per segment (early prelims, prelims, main card). The first segment alerts ~10 min before its scheduled start. Each later segment alerts when the last fight of the segment before it ends.
 
 ## How picks flow
 

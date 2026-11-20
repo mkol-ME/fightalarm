@@ -30,9 +30,42 @@ export function bouts(event) {
   return list.length > 1 && list[0].start > list.at(-1).start ? list.reverse() : list;
 }
 
-// Bout ids picked on the picker page for this event, or null (= alert for every fight).
+// Bout ids picked on the picker page for this event, or null when nothing was
+// picked or every fight was: then only the start of each card segment alerts.
 export function pickedIds(picks, event) {
-  return picks?.eventId === event.id ? new Set(picks.bouts) : null;
+  if (picks?.eventId !== event.id || picks.all) return null;
+  return new Set(picks.bouts);
+}
+
+// Group bouts into card segments by scheduled start time; the latest is the main card.
+export function segments(list) {
+  const times = [...new Set(list.map(b => b.start))].sort((a, b) => a - b);
+  const label = i => (i === times.length - 1 ? 'Main card' : i === times.length - 2 ? 'Prelims' : 'Early prelims');
+  return times.map((t, i) => ({ label: label(i), start: t, first: list.find(b => b.start === t).id }));
+}
+
+// One alert per segment: ~10 min before the first segment's scheduled start, and
+// when the last fight of the previous segment ends for the rest. Falls back to
+// "is live" if ESPN skips straight to the segment's opener starting.
+export function segmentAlerts(prev, list, segs, sent, now) {
+  const out = [];
+  for (const s of segs) {
+    const i = list.findIndex(b => b.id === s.first);
+    const opener = list[i];
+    if (!opener || sent.has(s.first)) continue;
+    let alert;
+    if (opener.state === 'pre') {
+      const due = i === 0 ? now >= s.start - 10 * 60_000 : list.slice(0, i).every(b => b.state === 'post');
+      if (due) alert = { title: `${s.label}: starting in ~10 min`, message: `Opening fight: ${opener.name}` };
+    } else if (opener.state === 'in' && prev.get(opener.id) === 'pre') {
+      alert = { title: `${s.label}: live now`, message: `Opening fight: ${opener.name}` };
+    }
+    if (alert) {
+      sent.add(s.first);
+      out.push({ ...alert, priority: 5, tags: ['rotating_light'] });
+    }
+  }
+  return out;
 }
 
 const watched = (bout, picked) => !picked || picked.has(bout.id);
@@ -117,10 +150,13 @@ async function main() {
 
   let list = bouts(event);
   let picked = pickedIds(picks, event);
+  // Fixed for the run in case ESPN rewrites bout times to actual start times mid-card.
+  const segs = segments(list);
+  const sent = new Set();
   console.log(`Watching ${event.name}`);
   if (list.every(b => b.state === 'pre')) {
     const first = new Date(Math.min(...list.map(b => b.start)));
-    const scope = picked ? `${picked.size} of ${list.length} fights picked` : 'All fights (no picks made)';
+    const scope = picked ? `${picked.size} of ${list.length} fights picked` : `Segment starts only (${segs.map(s => s.label).join(', ')})`;
     await notify({ title: `Fight alarm armed: ${event.name}`, message: `${scope}. First bout ${first.toUTCString()}.`, priority: 2, tags: ['alarm_clock'] });
   }
 
@@ -138,7 +174,8 @@ async function main() {
     picks = await latestPicks();
     picked = pickedIds(picks, ev);
     list = bouts(ev);
-    for (const n of changes(prev, list, picked)) await notify(n).catch(err => console.error(err.message));
+    const alerts = picked ? changes(prev, list, picked) : segmentAlerts(prev, list, segs, sent, Date.now());
+    for (const n of alerts) await notify(n).catch(err => console.error(err.message));
     prev = new Map(list.map(b => [b.id, b.state]));
     if (list.every(b => b.state === 'post')) return console.log('Card finished.');
   }

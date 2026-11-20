@@ -108,7 +108,7 @@ function boutRow(c, checked) {
 function render(picks) {
   let comps = event.competitions;
   if (comps.length > 1 && Date.parse(comps[0].date) > Date.parse(comps.at(-1).date)) comps = [...comps].reverse();
-  const picked = picks?.eventId === event.id ? new Set(picks.bouts) : null;
+  const picked = picks?.eventId === event.id && !picks.all ? new Set(picks.bouts) : null;
   const times = [...new Set(comps.map(c => c.date))].sort();
   const fmt = d => new Date(d).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 
@@ -123,10 +123,11 @@ function render(picks) {
     ${sections.map(s => `
       <h2><span>${s.label}</span><span>${esc(fmt(s.t))}</span></h2>
       <div class="card">${s.bouts.map(c => boutRow(c, !picked || picked.has(c.id))).join('')}</div>`).join('')}
-    <p class="note">Checked fights get an <b>UP NEXT</b> alert when the fight before them ends (~10 min warning), plus LIVE and result alerts. Changes save automatically.</p>`;
+    <p class="note">Checked fights get an <b>UP NEXT</b> alert when the fight before them ends (~10 min warning), plus LIVE and result alerts.
+    With <b>every</b> fight checked you only get one alert per segment: ~10 min before ${esc(sections.at(-1).label.toLowerCase())} start, and when each later segment is up next. Changes save automatically.</p>`;
 
   document.getElementById('bar').hidden = false;
-  setStatus(picked ? `${picked.size} fights picked` : 'All fights (no picks yet)');
+  setStatus(picked ? `${picked.size} fights picked` : 'All fights · segment starts only');
 }
 
 function checkedIds() {
@@ -141,11 +142,12 @@ function queueSave() {
 
 async function save() {
   const bouts = checkedIds();
-  const body = JSON.stringify({ eventId: event.id, event: event.name, bouts, updated: Date.now() });
+  const all = bouts.length === event.competitions.length;
+  const body = JSON.stringify({ eventId: event.id, event: event.name, bouts, all, updated: Date.now() });
   try {
     const res = await fetch(`https://ntfy.sh/${encodeURIComponent(topic)}`, { method: 'POST', body });
     if (!res.ok) throw new Error(res.status);
-    setStatus(`Saved · ${bouts.length} fights`, true);
+    setStatus(all ? 'Saved · segment starts only' : `Saved · ${bouts.length} fights`, true);
   } catch {
     setStatus('Save failed, check connection');
   }
