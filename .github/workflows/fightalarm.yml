@@ -1,0 +1,32 @@
+name: fight-alarm
+
+on:
+  schedule:
+    - cron: '17 * * * *' # hourly; exits in seconds unless a card is live or within ~75 min
+  workflow_dispatch:
+
+concurrency:
+  group: fight-alarm
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v4
+      - run: node fightalarm.mjs
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          PICKS_TOPIC: ${{ secrets.PICKS_TOPIC }}
+      - name: Save picks
+        if: always()
+        run: |
+          git diff --quiet docs/watch.json && exit 0
+          git config user.name github-actions
+          git config user.email github-actions@users.noreply.github.com
+          git commit -am "Save fight picks"
+          git pull --rebase && git push

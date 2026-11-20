@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Fight Alarm">
+<title>Fight Alarm</title>
+<style>
+  :root {
+    --bg: #f4f3ef; --card: #ffffff; --ink: #16161a; --muted: #6d6d73; --line: #e3e1db;
+    --accent: #d7341f; --accent-ink: #ffffff; --ok: #1f7a4a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0e0e10; --card: #19191c; --ink: #f1f1f3; --muted: #9b9ba3; --line: #2a2a2f; --accent: #ff5a3d; --accent-ink: #120402; --ok: #4cc38a; }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding: env(safe-area-inset-top) 16px calc(env(safe-area-inset-bottom) + 88px);
+  }
+  main { max-width: 560px; margin: 0 auto; }
+  header { padding: 20px 0 8px; }
+  .eyebrow { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); font-weight: 700; }
+  h1 { font-size: 24px; line-height: 1.15; margin: 4px 0 2px; }
+  .sub { color: var(--muted); font-size: 14px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 24px 0 8px; display: flex; justify-content: space-between; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+  label.bout { display: flex; align-items: center; gap: 14px; padding: 14px 16px; border-top: 1px solid var(--line); cursor: pointer; }
+  label.bout:first-child { border-top: 0; }
+  label.bout input { width: 24px; height: 24px; accent-color: var(--accent); flex: none; margin: 0; }
+  .names { font-weight: 600; }
+  .meta { font-size: 13px; color: var(--muted); }
+  .badge { font-size: 11px; font-weight: 700; padding: 2px 6px; border-radius: 6px; margin-left: 6px; vertical-align: 1px; }
+  .live { background: var(--accent); color: var(--accent-ink); }
+  .final { border: 1px solid var(--line); color: var(--muted); }
+  .bar {
+    position: fixed; left: 0; right: 0; bottom: 0; background: var(--card); border-top: 1px solid var(--line);
+    padding: 12px 16px calc(env(safe-area-inset-bottom) + 12px);
+  }
+  .bar-inner { max-width: 560px; margin: 0 auto; display: flex; gap: 8px; align-items: center; }
+  .status { flex: 1; font-size: 14px; color: var(--muted); }
+  .status.ok { color: var(--ok); }
+  button { font: inherit; font-weight: 600; border: 1px solid var(--line); background: var(--bg); color: var(--ink); border-radius: 10px; padding: 9px 14px; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+  input[type=text] { font: inherit; width: 100%; padding: 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); color: var(--ink); margin: 12px 0; }
+  .note { color: var(--muted); font-size: 13px; margin-top: 20px; }
+</style>
+</head>
+<body>
+<main id="app"><header><div class="sub">Loading card…</div></header></main>
+<div class="bar" id="bar" hidden>
+  <div class="bar-inner">
+    <span class="status" id="status"></span>
+    <button id="none">None</button>
+    <button id="all">All</button>
+  </div>
+</div>
+<script>
+const ESPN = 'https://site.api.espn.com/apis/site/v2/sports/mma/ufc/scoreboard';
+const app = document.getElementById('app');
+const statusEl = document.getElementById('status');
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+};
+
+// The private picks topic comes from the URL (#topic) the first time, then localStorage.
+let topic = decodeURIComponent(location.hash.slice(1)) || store.get('picksTopic');
+if (location.hash.length > 1) store.set('picksTopic', topic);
+
+let event, saveTimer;
+
+function setStatus(text, ok) {
+  statusEl.textContent = text;
+  statusEl.className = 'status' + (ok ? ' ok' : '');
+}
+
+async function currentPicks() {
+  const [saved, fresh] = await Promise.all([
+    fetch('watch.json', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).catch(() => null),
+    fetch(`https://ntfy.sh/${encodeURIComponent(topic)}/json?poll=1&since=12h`).then(r => r.text()).then(t => {
+      const msgs = t.split('\n').filter(Boolean).map(l => JSON.parse(l)).filter(m => m.event === 'message');
+      return msgs.length ? JSON.parse(msgs.at(-1).message) : null;
+    }).catch(() => null),
+  ]);
+  return (fresh?.updated ?? 0) > (saved?.updated ?? 0) ? fresh : saved;
+}
+
+function segmentLabel(i, count) {
+  return i === count - 1 ? 'Main card' : i === count - 2 ? 'Prelims' : 'Early prelims';
+}
+
+function boutRow(c, checked) {
+  const names = c.competitors.map(x => esc(x.athlete.displayName)).join(' <span class="meta">vs</span> ');
+  const st = c.status.type;
+  const winner = c.competitors.find(x => x.winner)?.athlete.displayName;
+  const badge = st.state === 'in' ? '<span class="badge live">LIVE</span>'
+    : st.state === 'post' ? '<span class="badge final">FINAL</span>' : '';
+  const meta = esc(c.type?.abbreviation ?? '') + (winner ? ` · ${esc(winner)} won` : '');
+  return `<label class="bout"><input type="checkbox" value="${esc(c.id)}"${checked ? ' checked' : ''}>
+    <span><span class="names">${names}</span>${badge}<br><span class="meta">${meta}</span></span></label>`;
+}
+
+function render(picks) {
+  let comps = event.competitions;
+  if (comps.length > 1 && Date.parse(comps[0].date) > Date.parse(comps.at(-1).date)) comps = [...comps].reverse();
+  const picked = picks?.eventId === event.id ? new Set(picks.bouts) : null;
+  const times = [...new Set(comps.map(c => c.date))].sort();
+  const fmt = d => new Date(d).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+
+  // Main event first within each segment reads like a fight poster.
+  const sections = times.map((t, i) => ({ t, label: segmentLabel(i, times.length), bouts: comps.filter(c => c.date === t).reverse() })).reverse();
+  app.innerHTML = `
+    <header>
+      <div class="eyebrow">Fight Alarm</div>
+      <h1>${esc(event.name)}</h1>
+      <div class="sub">${esc(fmt(times[0]))}</div>
+    </header>
+    ${sections.map(s => `
+      <h2><span>${s.label}</span><span>${esc(fmt(s.t))}</span></h2>
+      <div class="card">${s.bouts.map(c => boutRow(c, !picked || picked.has(c.id))).join('')}</div>`).join('')}
+    <p class="note">Checked fights get an <b>UP NEXT</b> alert when the fight before them ends (~10 min warning), plus LIVE and result alerts. Changes save automatically.</p>`;
+
+  document.getElementById('bar').hidden = false;
+  setStatus(picked ? `${picked.size} fights picked` : 'All fights (no picks yet)');
+}
+
+function checkedIds() {
+  return [...app.querySelectorAll('input[type=checkbox]:checked')].map(i => i.value);
+}
+
+function queueSave() {
+  setStatus('Saving…');
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(save, 700);
+}
+
+async function save() {
+  const bouts = checkedIds();
+  const body = JSON.stringify({ eventId: event.id, event: event.name, bouts, updated: Date.now() });
+  try {
+    const res = await fetch(`https://ntfy.sh/${encodeURIComponent(topic)}`, { method: 'POST', body });
+    if (!res.ok) throw new Error(res.status);
+    setStatus(`Saved · ${bouts.length} fights`, true);
+  } catch {
+    setStatus('Save failed, check connection');
+  }
+}
+
+function setAll(on) {
+  app.querySelectorAll('input[type=checkbox]').forEach(i => { i.checked = on; });
+  queueSave();
+}
+
+function askForTopic() {
+  app.innerHTML = `<header><div class="eyebrow">Fight Alarm</div><h1>Setup</h1>
+    <div class="sub">Enter your private picks topic (PICKS_TOPIC).</div></header>
+    <input type="text" id="topic" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="fightalarm-…-picks">
+    <button class="primary" id="go">Save</button>`;
+  document.getElementById('go').onclick = () => {
+    topic = document.getElementById('topic').value.trim();
+    if (!topic) return;
+    store.set('picksTopic', topic);
+    start();
+  };
+}
+
+async function start() {
+  if (!topic) return askForTopic();
+  try {
+    const [data, picks] = await Promise.all([fetch(ESPN, { cache: 'no-store' }).then(r => r.json()), currentPicks()]);
+    event = data.events.find(e => e.competitions.some(c => c.status.type.state !== 'post')) ?? data.events.at(-1);
+    if (!event) {
+      app.innerHTML = '<header><div class="eyebrow">Fight Alarm</div><h1>No upcoming card</h1><div class="sub">ESPN hasn\'t posted the next one yet.</div></header>';
+      return;
+    }
+    render(picks);
+  } catch {
+    app.innerHTML = '<header><div class="eyebrow">Fight Alarm</div><h1>Couldn\'t load the card</h1><div class="sub">Pull to refresh to try again.</div></header>';
+  }
+}
+
+app.addEventListener('change', e => { if (e.target.type === 'checkbox') queueSave(); });
+document.getElementById('all').onclick = () => setAll(true);
+document.getElementById('none').onclick = () => setAll(false);
+start();
+</script>
+</body>
+</html>
