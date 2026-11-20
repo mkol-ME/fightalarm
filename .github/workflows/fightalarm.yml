@@ -22,6 +22,13 @@ jobs:
         env:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           PICKS_TOPIC: ${{ secrets.PICKS_TOPIC }}
+          ARMED_UNTIL: '2026-11-22' # "armed" push for the first live card only; logged after that
+      - name: Report failure
+        if: failure()
+        run: |
+          curl -s -o /dev/null -H "Title: Fight alarm broke" -H "Priority: 4" -H "Tags: warning" \
+            -d "A run failed. Alerts may not fire until it's fixed: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            "https://ntfy.sh/${{ secrets.NTFY_TOPIC }}"
       - name: Save picks
         if: always()
         run: |

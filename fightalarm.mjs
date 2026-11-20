@@ -10,6 +10,7 @@ const TOPIC = process.env.NTFY_TOPIC;
 const PICKS_TOPIC = process.env.PICKS_TOPIC;
 const PICKS_FILE = new URL('./docs/watch.json', import.meta.url);
 const DRY_RUN = process.env.DRY_RUN === '1';
+const ARMED_UNTIL = Date.parse(process.env.ARMED_UNTIL || '') || 0; // push the "armed" notice only before this date
 const POLL_MS = 30_000;
 const LEAD_MS = Number(process.env.LEAD_MIN || 75) * 60_000; // start watching this long before the first bout
 const MAX_RUN_MS = 350 * 60_000; // GitHub Actions kills jobs at 6h; the next hourly run picks up from here
@@ -166,7 +167,9 @@ async function main() {
   if (list.every(b => b.state === 'pre') && picked?.size !== 0) {
     const first = new Date(Math.min(...list.map(b => b.start)));
     const scope = picked ? `${picked.size} of ${list.length} fights picked` : `Segment starts only (${segs.map(s => s.label).join(', ')})`;
-    await notify({ title: `Fight alarm armed: ${event.name}`, message: `${scope}. First bout ${first.toUTCString()}.`, priority: 2, tags: ['alarm_clock'] });
+    const armed = { title: `Fight alarm armed: ${event.name}`, message: `${scope}. First bout ${first.toUTCString()}.`, priority: 2, tags: ['alarm_clock'] };
+    if (started < ARMED_UNTIL) await notify(armed);
+    else console.log(`${armed.title} | ${armed.message}`);
   }
 
   let prev = new Map(list.map(b => [b.id, b.state]));
