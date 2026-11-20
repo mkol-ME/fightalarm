@@ -13,7 +13,7 @@ If every fight on a card is picked, or nothing is picked, you get **segment mode
 
 ## How picks flow
 
-Picker page → private ntfy topic (`PICKS_TOPIC`, kept 12 h by ntfy) → read by `fightalarm.mjs` every run and every 30 s during a card → saved to `docs/watch.json` and committed by the workflow so picks made days early survive.
+Picker page → private ntfy topic (`PICKS_TOPIC`, kept 12 h by ntfy) → read by `fightalarm.mjs` every run and every 30 s during a card → saved to `docs/picks/` and committed by the workflow so picks made days early survive.
 
 ## Setup
 
@@ -21,6 +21,18 @@ Picker page → private ntfy topic (`PICKS_TOPIC`, kept 12 h by ntfy) → read b
 2. Push this repo to GitHub (public repos get unlimited Actions minutes) and enable Pages from `main` → `/docs`.
 3. Repo secrets: `NTFY_TOPIC` (alerts) and `PICKS_TOPIC` (picks).
 4. On your phone, open `https://<user>.github.io/fightalarm/#<PICKS_TOPIC>` once, then Share → Add to Home Screen. The topic is remembered after that.
+
+## Friends
+
+Friends get their own picks and alerts from this same setup, with no GitHub account needed:
+
+```sh
+node friends.mjs add heath   # prints heath's ntfy topic and personal picker link
+node friends.mjs list
+node friends.mjs remove heath
+```
+
+The list is kept in `friends.txt` (gitignored, on the machine you ran it from) and uploaded as the `FRIENDS` secret, because GitHub secrets can't be read back. Each person's picks are saved as `docs/picks/<hash of picks topic>.json`.
 
 ## Local use
 

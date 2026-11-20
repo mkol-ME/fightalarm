@@ -50,3 +50,14 @@ for (const [label, picks] of Object.entries(scenarios)) {
   tick(opener, 'co-main ends');
   step(last, 'in'); tick(opener, 'main event live');
 }
+
+// Browser (WebCrypto) and script (node:crypto) must agree on the picks file name.
+const { picksKey, parseUsers } = await import('./fightalarm.mjs');
+const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('fightpicks-test'));
+const webKey = [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('').slice(0, 16);
+console.log('\npicks key matches browser:', webKey === picksKey('fightpicks-test'));
+
+// Old saves that list every bout (no "all" flag) count as all -> segment mode.
+console.log('every bout ticked -> segment mode:', pickedIds({ eventId: event.id, bouts: comps.map(c => c.id), updated: 1 }, event) === null);
+
+console.log('users:', JSON.stringify(parseUsers({ NTFY_TOPIC: 'a1', PICKS_TOPIC: 'p1', FRIENDS: 'heath a2 p2\n-\n\nbob a3 p3' }).map(u => u.name)));

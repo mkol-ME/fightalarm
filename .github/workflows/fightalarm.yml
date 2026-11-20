@@ -22,6 +22,7 @@ jobs:
         env:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           PICKS_TOPIC: ${{ secrets.PICKS_TOPIC }}
+          FRIENDS: ${{ secrets.FRIENDS }}
           ARMED_UNTIL: '2026-11-22' # "armed" push for the first live card only; logged after that
       - name: Report failure
         if: failure()
@@ -32,8 +33,9 @@ jobs:
       - name: Save picks
         if: always()
         run: |
-          git diff --quiet docs/watch.json && exit 0
+          git add -A docs/picks
+          git diff --cached --quiet && exit 0
           git config user.name github-actions
           git config user.email github-actions@users.noreply.github.com
-          git commit -am "Save fight picks"
+          git commit -m "Save fight picks"
           git pull --rebase && git push

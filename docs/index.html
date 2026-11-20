@@ -103,9 +103,16 @@ function normalizePicks(p) {
   return { updated: 0, events: {} };
 }
 
+// Must match picksKey() in fightalarm.mjs: saved picks live at picks/<key>.json.
+async function picksKey(t) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t));
+  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('').slice(0, 16);
+}
+
 async function currentPicks() {
+  const key = await picksKey(topic);
   const [saved, fresh] = await Promise.all([
-    fetch('watch.json', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).catch(() => null),
+    fetch(`picks/${key}.json`, { cache: 'no-store' }).then(r => r.ok ? r.json() : null).catch(() => null),
     fetch(`https://ntfy.sh/${encodeURIComponent(topic)}/json?poll=1&since=12h`).then(r => r.text()).then(t =>
       t.split('\n').filter(Boolean).map(l => JSON.parse(l)).filter(m => m.event === 'message')
         .map(m => { try { return JSON.parse(m.message); } catch { return null; } })
@@ -128,18 +135,26 @@ function orderedBouts(e) {
   return comps.length > 1 && Date.parse(comps[0].date) > Date.parse(comps.at(-1).date) ? [...comps].reverse() : comps;
 }
 
-function pickSummary(id) {
-  const p = picks.events[id];
-  if (!p || p.all) return { text: 'All · segment alerts', off: false };
-  if (!p.bouts.length) return { text: 'Off', off: true };
-  return { text: `${p.bouts.length} picked`, off: false };
+// Picked bout ids for an event, or null for "all" (nothing saved, or every fight ticked).
+function pickedSet(e) {
+  const p = picks.events[e.id];
+  if (!p || p.all) return null;
+  const ids = new Set(p.bouts);
+  return e.competitions.every(c => ids.has(c.id)) ? null : ids;
+}
+
+function pickSummary(e) {
+  const picked = pickedSet(e);
+  if (!picked) return { text: 'All · segment alerts', off: false };
+  if (!picked.size) return { text: 'Off', off: true };
+  return { text: `${picked.size} picked`, off: false };
 }
 
 function renderTabs() {
   const nav = document.getElementById('tabs');
   nav.innerHTML = events.map(e => {
     const [prefix, headline] = e.name.includes(': ') ? e.name.split(': ') : ['UFC', e.name];
-    const s = pickSummary(e.id);
+    const s = pickSummary(e);
     return `<button class="tab" role="tab" data-id="${esc(e.id)}" aria-selected="${e.id === current.id}">
       <div class="when">${esc(fmt(e.date, { weekday: 'short', month: 'short', day: 'numeric' }))} · ${esc(prefix.replace('UFC Fight Night', 'Fight Night'))}</div>
       <div class="what">${esc(headline)}</div>
@@ -164,8 +179,7 @@ function boutRow(c, checked) {
 
 function renderCard() {
   const comps = orderedBouts(current);
-  const p = picks.events[current.id];
-  const picked = p && !p.all ? new Set(p.bouts) : null;
+  const picked = pickedSet(current);
   const times = [...new Set(comps.map(c => c.date))].sort();
   // Main event first within each segment reads like a fight poster.
   const sections = times.map((t, i) => ({ t, label: segmentLabel(i, times.length), bouts: comps.filter(c => c.date === t).reverse() })).reverse();
@@ -177,7 +191,7 @@ function renderCard() {
       <div class="card">${s.bouts.map(c => boutRow(c, !picked || picked.has(c.id))).join('')}</div>`).join('')}
     <p class="note">Checked fights get an <b>UP NEXT</b> alert when the fight before them ends (~10 min warning), plus LIVE and result alerts.
     With <b>every</b> fight checked you only get one alert per segment instead, and fights announced later are included automatically. <b>None</b> turns this card off. Changes save automatically.</p>`;
-  setStatus(pickSummary(current.id).text);
+  setStatus(pickSummary(current).text);
 }
 
 function render() {
@@ -221,7 +235,7 @@ async function save() {
     if (!res.ok) throw new Error(res.status);
     picks = next;
     renderTabs();
-    setStatus(`Saved · ${pickSummary(current.id).text}`, true);
+    setStatus(`Saved · ${pickSummary(current).text}`, true);
   } catch {
     setStatus('Save failed, check connection');
   }
