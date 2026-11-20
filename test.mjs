@@ -18,9 +18,11 @@ const opener = Date.parse(comps[0].date);
 const mainStart = comps.findIndex(c => c.date === comps[last].date);
 const scenarios = {
   'no picks (segment mode)': null,
-  'every fight picked (segment mode)': { eventId: event.id, bouts: comps.map(c => c.id), all: true },
-  'picked main event only': { eventId: event.id, bouts: [comps[last].id] },
-  'picks for a different card': { eventId: 'other', bouts: [comps[last].id] },
+  'all for this card (segment mode)': { updated: 1, events: { [event.id]: { all: true } } },
+  'main event only, another card all': { updated: 1, events: { other: { all: true }, [event.id]: { bouts: [comps[last].id] } } },
+  'this card off': { updated: 1, events: { [event.id]: { bouts: [] } } },
+  'picks only for a different card': { updated: 1, events: { other: { bouts: [comps[last].id] } } },
+  'old single-event format, main event only': { eventId: event.id, bouts: [comps[last].id], updated: 1 },
 };
 for (const [label, picks] of Object.entries(scenarios)) {
   console.log(`\n--- ${label} ---`);
