@@ -2,7 +2,9 @@ name: fight-alarm
 
 on:
   schedule:
-    - cron: '17 * * * *' # hourly; exits in seconds unless a card is live or within ~75 min
+    # GitHub skips scheduled runs often, so this only needs to land once in the
+    # 30h before a card; that run then stays on and hands off to fresh runs.
+    - cron: '7,37 * * * *'
   workflow_dispatch:
 
 concurrency:
@@ -11,6 +13,7 @@ concurrency:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   watch:
@@ -18,12 +21,13 @@ jobs:
     timeout-minutes: 355
     steps:
       - uses: actions/checkout@v4
-      - run: node fightalarm.mjs
+      - id: watch
+        run: node fightalarm.mjs
         env:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           PICKS_TOPIC: ${{ secrets.PICKS_TOPIC }}
           FRIENDS: ${{ secrets.FRIENDS }}
-          ARMED_UNTIL: '2026-11-22' # "armed" push for the first live card only; logged after that
+          MAX_RUN_MIN: ${{ vars.MAX_RUN_MIN }} # unset normally; tiny values test the hand-off
       - name: Report failure
         if: failure()
         run: |
@@ -39,3 +43,8 @@ jobs:
           git config user.email github-actions@users.noreply.github.com
           git commit -m "Save fight picks"
           git pull --rebase && git push
+      - name: Hand off to a fresh run
+        if: always() && steps.watch.outputs.continue == 'true'
+        run: gh workflow run fightalarm.yml -R "$GITHUB_REPOSITORY" --ref main
+        env:
+          GH_TOKEN: ${{ github.token }}

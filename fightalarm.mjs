@@ -4,16 +4,18 @@
 // Serves the owner (NTFY_TOPIC/PICKS_TOPIC) plus any friends listed in FRIENDS.
 
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
 const SCOREBOARD = 'https://site.api.espn.com/apis/site/v2/sports/mma/ufc/scoreboard';
 const PICKS_DIR = new URL('./docs/picks/', import.meta.url);
 const DRY_RUN = process.env.DRY_RUN === '1';
-const ARMED_UNTIL = Date.parse(process.env.ARMED_UNTIL || '') || 0; // push the "armed" notice only before this date
 const POLL_MS = 30_000;
-const LEAD_MS = Number(process.env.LEAD_MIN || 75) * 60_000; // start watching this long before the first bout
-const MAX_RUN_MS = 350 * 60_000; // GitHub Actions kills jobs at 6h; the next hourly run picks up from here
+const IDLE_POLL_MS = 5 * 60_000; // while the first bout is still hours away
+// GitHub's scheduler skips runs, so any run that sees a card within this window
+// stays on until it's over, handing off to a fresh run before the 6h job limit.
+const LOOKAHEAD_MS = Number(process.env.LOOKAHEAD_MIN || 30 * 60) * 60_000;
+const MAX_RUN_MS = Number(process.env.MAX_RUN_MIN || 340) * 60_000;
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -122,7 +124,7 @@ export function activeEvent(data, now) {
     const list = bouts(e);
     const first = Math.min(...list.map(b => b.start));
     if (list.every(b => b.state === 'post') || first < now - 12 * 3600_000) return false;
-    return list.some(b => b.state === 'in') || first - now < LEAD_MS;
+    return list.some(b => b.state === 'in') || first - now < LOOKAHEAD_MS;
   });
 }
 
@@ -153,10 +155,24 @@ async function latestPicks(user) {
   return saved;
 }
 
-async function scoreboard() {
-  const res = await fetch(SCOREBOARD, { cache: 'no-store' });
-  if (!res.ok) throw new Error(`ESPN returned ${res.status}`);
-  return res.json();
+async function scoreboard(tries = 1) {
+  for (let i = 1; ; i++) {
+    try {
+      const ymd = t => new Date(t).toISOString().slice(0, 10).replace(/-/g, '');
+      const res = await fetch(`${SCOREBOARD}?dates=${ymd(Date.now() - 864e5)}-${ymd(Date.now() + 2 * 864e5)}`, { cache: 'no-store' });
+      if (!res.ok) throw new Error(`ESPN returned ${res.status}`);
+      return await res.json();
+    } catch (err) {
+      if (i >= tries) throw err;
+      await sleep(20_000);
+    }
+  }
+}
+
+// Tells the workflow to start a fresh run that carries on watching.
+function handOff() {
+  console.log('Run limit reached; handing off to a new run.');
+  if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, 'continue=true\n');
 }
 
 async function notify(user, n) {
@@ -172,28 +188,21 @@ async function main() {
   if (!users.length) users.push({ name: 'dry-run' });
   const started = Date.now();
   for (const u of users) u.saved = await latestPicks(u); // also persists new picks on runs with no card
-  const event = activeEvent(await scoreboard(), started);
-  if (!event) return console.log('No card in progress or starting soon.');
+  const event = activeEvent(await scoreboard(3), started);
+  if (!event) return console.log('No card in progress or within the lookahead window.');
 
   let list = bouts(event);
+  const first = Math.min(...list.map(b => b.start));
   // Fixed for the run in case ESPN rewrites bout times to actual start times mid-card.
   const segs = segments(list);
-  console.log(`Watching ${event.name} for ${users.length} user(s)`);
-  for (const u of users) {
-    u.sent = new Set();
-    const picked = pickedIds(u.saved, event);
-    if (list.every(b => b.state === 'pre') && picked?.size !== 0) {
-      const first = new Date(Math.min(...list.map(b => b.start)));
-      const scope = picked ? `${picked.size} of ${list.length} fights picked` : `Segment starts only (${segs.map(s => s.label).join(', ')})`;
-      const armed = { title: `Fight alarm armed: ${event.name}`, message: `${scope}. First bout ${first.toUTCString()}.`, priority: 2, tags: ['alarm_clock'] };
-      if (started < ARMED_UNTIL) await notify(u, armed).catch(err => console.error(err.message));
-      else console.log(`[${u.name}] ${armed.title} | ${armed.message}`);
-    }
-  }
+  console.log(`Watching ${event.name} (first bout ${new Date(first).toISOString()}) for ${users.length} user(s)`);
+  for (const u of users) u.sent = new Set();
 
   let prev = new Map(list.map(b => [b.id, b.state]));
-  while (Date.now() - started < MAX_RUN_MS) {
-    await sleep(POLL_MS);
+  while (true) {
+    if (Date.now() - started > MAX_RUN_MS) return handOff();
+    const idle = list.every(b => b.state === 'pre') && first - Date.now() > 2 * 3600_000;
+    await sleep(idle ? IDLE_POLL_MS : POLL_MS);
     let ev;
     try {
       ev = (await scoreboard()).events.find(e => e.id === event.id);

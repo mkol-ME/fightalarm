@@ -11,8 +11,8 @@ const step = (i, state, winner) => {
   if (winner !== undefined) comps[i].competitors[winner].winner = true;
 };
 
-console.log('active 30 min before:', !!activeEvent(data, Date.parse(comps[0].date) - 30 * 60_000));
-console.log('active 3 h before:   ', !!activeEvent(data, Date.parse(comps[0].date) - 180 * 60_000));
+console.log('active 29 h before:', !!activeEvent(data, Date.parse(comps[0].date) - 29 * 3600_000));
+console.log('active 31 h before:', !!activeEvent(data, Date.parse(comps[0].date) - 31 * 3600_000));
 
 const opener = Date.parse(comps[0].date);
 const mainStart = comps.findIndex(c => c.date === comps[last].date);
